@@ -14,15 +14,17 @@ from time import sleep
 from typing import List, Tuple
 
 import requests
+from funutil import getLogger
 from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from urllib3 import disable_warnings
 from urllib3.exceptions import InsecureRequestWarning
 
-from lanzou.api.models import FileList
-from lanzou.api.parser import *
-from lanzou.api.types import *
-from lanzou.api.utils import *
-from lanzou.debug import logger
+from .models import FileList
+from .parser import *
+from .types import *
+from .utils import *
+
+logger = getLogger("fundrive")
 
 __all__ = ["LanZouCloud"]
 

@@ -1,6 +1,8 @@
 import re
 
-from lanzou.debug import logger
+from funutil import getLogger
+
+logger = getLogger("fundrive")
 
 """html页面参数解析"""
 

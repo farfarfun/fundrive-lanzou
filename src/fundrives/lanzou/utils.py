@@ -5,13 +5,14 @@ API 处理网页数据、数据切片时使用的工具
 import os
 import pickle
 import re
-from datetime import timedelta, datetime
-from random import uniform, choices, sample, shuffle, choice
-from typing import Tuple, Union, Any
+from datetime import datetime, timedelta
+from random import choice, choices, sample, shuffle, uniform
+from typing import Any, Tuple, Union
 
 import requests
+from funutil import getLogger
 
-from lanzou.debug import logger
+logger = getLogger("fundrive")
 
 __all__ = [
     "remove_notes",

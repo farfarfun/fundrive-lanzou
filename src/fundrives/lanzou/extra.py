@@ -1,10 +1,11 @@
 import json
 
 import requests
+from funutil import getLogger
 
-from lanzou.api.utils import USER_AGENT
-from lanzou.debug import logger
+from .utils import USER_AGENT
 
+logger = getLogger("fundrive")
 timeout = 2
 
 

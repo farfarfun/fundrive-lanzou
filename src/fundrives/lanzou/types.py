@@ -4,7 +4,7 @@ API 处理后返回的数据类型
 
 from collections import namedtuple
 
-from lanzou.api.models import FolderList
+from .models import FolderList
 
 File = namedtuple(
     "File", ["name", "id", "time", "size", "type", "downs", "has_pwd", "has_des"]
