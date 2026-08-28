@@ -3,7 +3,7 @@ name = "fundrive-lanzou"
 version = "1.2.74"
 description = "fundrive"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [ "cryptography>=44.0.0", "funutil>=1.0.43", "lanzou-api>=2.6.8", "requests>=2.28", "requests-toolbelt>=1.0.0",]
 
 [dependency-groups]
