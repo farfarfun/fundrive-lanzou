@@ -91,11 +91,12 @@ def test_lanzou_cloud_login_with_mocked_network():
     fake_login_response.json.return_value = {"info": "登录成功"}
     fake_login_response.cookies.get_dict.return_value = {"ylogin": "dummy"}
 
-    with mock.patch.object(
-        drive, "_get", return_value=fake_form_response
-    ) as mocked_get, mock.patch.object(
-        drive, "_post", return_value=fake_login_response
-    ) as mocked_post:
+    with (
+        mock.patch.object(drive, "_get", return_value=fake_form_response) as mocked_get,
+        mock.patch.object(
+            drive, "_post", return_value=fake_login_response
+        ) as mocked_post,
+    ):
         result = drive.login("dummy-user", "dummy-pass")
 
     assert result == LanZouCloud.SUCCESS
@@ -126,9 +127,7 @@ def test_lanzou_cloud_login_by_cookie_with_mocked_network():
     fake_response = mock.Mock()
     fake_response.text = "个人中心"
 
-    with mock.patch.object(
-        drive, "_get", return_value=fake_response
-    ) as mocked_get:
+    with mock.patch.object(drive, "_get", return_value=fake_response) as mocked_get:
         result = drive.login_by_cookie({"ylogin": "dummy"})
 
     assert result == LanZouCloud.SUCCESS

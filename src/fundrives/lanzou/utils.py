@@ -7,29 +7,29 @@ import pickle
 import re
 from datetime import datetime, timedelta
 from random import choice, choices, sample, shuffle, uniform
-from typing import Any, Tuple, Union
+from typing import Any
 
 import requests
-from funutil import getLogger
+from farlog import getLogger
 
 logger = getLogger("fundrive")
 
 __all__ = [
-    "remove_notes",
-    "name_format",
-    "time_format",
-    "is_name_valid",
-    "is_file_url",
-    "is_folder_url",
-    "big_file_split",
-    "un_serialize",
-    "let_me_upload",
     "USER_AGENT",
-    "sum_files_size",
-    "convert_file_size_to_str",
+    "big_file_split",
     "calc_acw_sc__v2",
     "convert_file_size_to_int",
+    "convert_file_size_to_str",
+    "is_file_url",
+    "is_folder_url",
+    "is_name_valid",
+    "let_me_upload",
+    "name_format",
+    "remove_notes",
+    "sum_files_size",
+    "time_format",
     "time_stamp",
+    "un_serialize",
 ]
 
 USER_AGENT = (
@@ -88,13 +88,13 @@ def sum_files_size(files: object) -> int:
 
 def convert_file_size_to_str(total: int) -> str:
     if total < 1 << 10:
-        size = "{:.2f} B".format(total)
+        size = f"{total:.2f} B"
     elif total < 1 << 20:
-        size = "{:.2f} K".format(total / (1 << 10))
+        size = f"{total / (1 << 10):.2f} K"
     elif total < 1 << 30:
-        size = "{:.2f} M".format(total / (1 << 20))
+        size = f"{total / (1 << 20):.2f} M"
     else:
-        size = "{:.2f} G".format(total / (1 << 30))
+        size = f"{total / (1 << 30):.2f} G"
 
     return size
 
@@ -114,10 +114,10 @@ def time_format(time_str: str) -> str:
         return time_str
 
 
-reg_number = re.compile("\d+")
+reg_number = re.compile(r"\d+")
 
 
-def time_stamp(time_str: str) -> Union[Union[datetime, timedelta, str], Any]:
+def time_stamp(time_str: str) -> datetime | timedelta | str | Any:
     """输出格式化时间 %Y-%m-%d"""
     numbers = reg_number.findall(time_str)
     date = datetime.today()
@@ -309,7 +309,7 @@ def un_serialize(data: bytes):
 
 def big_file_split(
     file_path: str, max_size: int = 100, start_byte: int = 0
-) -> Tuple[int, str]:
+) -> tuple[int, str]:
     """将大文件拆分为大小、格式随机的数据块, 可指定文件起始字节位置(用于续传)
     :return 数据块文件的大小和绝对路径
     """
@@ -362,7 +362,7 @@ def big_file_split(
         big_file.seek(start_byte)
         left_size = file_size - start_byte  # 大文件剩余大小
         random_size = get_random_size()
-        tmp_file_size = random_size if left_size > random_size else left_size
+        tmp_file_size = min(left_size, random_size)
         tmp_file_path = tmp_dir + os.sep + get_random_name()
 
         chunk_size = 524288  # 512KB
@@ -490,7 +490,7 @@ def unsbox(str_arg):
         36,
     ]
     v2 = ["" for _ in v1]
-    for idx in range(0, len(str_arg)):
+    for idx in range(len(str_arg)):
         v3 = str_arg[idx]
         for idx2 in range(len(v1)):
             if v1[idx2] == idx + 1:

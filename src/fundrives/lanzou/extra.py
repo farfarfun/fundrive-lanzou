@@ -1,40 +1,47 @@
 import json
+import os
 
 import requests
-from funutil import getLogger
+from farlog import getLogger
 
 from .utils import USER_AGENT
 
 logger = getLogger("fundrive")
 timeout = 2
 
+# 第三方短链服务的访问令牌不应硬编码在代码中，改为从环境变量读取；
+# 未配置时直接跳过对应服务，走后面的无鉴权兜底方案。
+DWZ_LC_TOKEN = os.getenv("FUNDRIVE_LANZOU_DWZ_LC_TOKEN")
+ECX_CX_TOKEN = os.getenv("FUNDRIVE_LANZOU_ECX_CX_TOKEN")
 
-def get_short_url(url: str):
+
+def get_short_url(url: str) -> str:
     """短链接生成器"""
     headers = {"User-Agent": USER_AGENT}
     short_url = ""
-    try:
-        post_data = {"url": url}
-        # 10W次/天, https证书过期
-        headers["Authorization"] = "Token xxHQfao69Ra9G7EI87mC"
-        resp = requests.post(
-            "https://www.dwz.lc/api/url/add",
-            json=post_data,
-            headers=headers,
-            timeout=timeout,
-        )
-        logger.error(resp.text)
-        rsp = json.loads(resp.text)
-        if rsp:
-            short_url = rsp["short"]
-    except Exception as e:
-        logger.error(f"get_short_url error: e={e}")
-
-    if not short_url:
+    if DWZ_LC_TOKEN:
         try:
             post_data = {"url": url}
             # 10W次/天, https证书过期
-            headers["Authorization"] = "Token cH4lpSuC6LgqoDidiqB5"
+            headers["Authorization"] = f"Token {DWZ_LC_TOKEN}"
+            resp = requests.post(
+                "https://www.dwz.lc/api/url/add",
+                json=post_data,
+                headers=headers,
+                timeout=timeout,
+            )
+            logger.error(resp.text)
+            rsp = json.loads(resp.text)
+            if rsp:
+                short_url = rsp["short"]
+        except Exception as e:
+            logger.error(f"get_short_url error: e={e}")
+
+    if not short_url and ECX_CX_TOKEN:
+        try:
+            post_data = {"url": url}
+            # 10W次/天, https证书过期
+            headers["Authorization"] = f"Token {ECX_CX_TOKEN}"
             resp = requests.post(
                 "https://www.ecx.cx/api/url/add",
                 json=post_data,

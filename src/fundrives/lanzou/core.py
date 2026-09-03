@@ -11,10 +11,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from random import shuffle, uniform
 from time import sleep
-from typing import List, Tuple
 
 import requests
-from funutil import getLogger
+from farlog import getLogger
 from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from urllib3 import disable_warnings
 from urllib3.exceptions import InsecureRequestWarning
@@ -73,7 +72,7 @@ def check_domains():
 executors.submit(check_domains)
 
 
-class LanZouCloud(object):
+class LanZouCloud:
     FAILED = -1
     SUCCESS = 0
     ID_ERROR = 1
@@ -157,7 +156,7 @@ class LanZouCloud(object):
             self._host_url = new_host
 
     @staticmethod
-    def _all_possible_urls(url: str) -> List[str]:
+    def _all_possible_urls(url: str) -> list[str]:
         return [url.replace("lanzoub.com", d) for d in available_domains]
 
     def set_max_size(self, max_size=100) -> int:
@@ -219,7 +218,9 @@ class LanZouCloud(object):
 
     def login_by_cookie(self, cookie: dict) -> int:
         """通过cookie登录"""
-        print("cookie", cookie["ylogin"])
+        logger.debug(
+            "login_by_cookie: ylogin=%s", "***" if cookie.get("ylogin") else ""
+        )
 
         self._session.cookies.update(cookie)
         html = self._get(self._account_url)
@@ -527,7 +528,7 @@ class LanZouCloud(object):
                 )
         return file_list
 
-    def get_dir_list(self, folder_id=-1) -> Tuple[FolderList, FolderList]:
+    def get_dir_list(self, folder_id=-1) -> tuple[FolderList, FolderList]:
         """获取子文件夹列表与全路径"""
         folder_list = FolderList()
         path_list = FolderList()
@@ -626,7 +627,7 @@ class LanZouCloud(object):
             # 若该页面进行了js加密，则进行解密，计算acw_sc__v2，并加入cookie
             acw_sc__v2 = calc_acw_sc__v2(first_page.text)
             self._session.cookies.set("acw_sc__v2", acw_sc__v2)
-            logger.debug(f"Set Cookie: acw_sc__v2={acw_sc__v2}")
+            logger.debug("Set Cookie: acw_sc__v2=***")
             first_page = self._get(share_url)  # 文件分享页面(第一页)
             if not first_page:
                 return FileDetail(LanZouCloud.NETWORK_ERROR, pwd=pwd, url=share_url)
@@ -647,10 +648,9 @@ class LanZouCloud(object):
                     LanZouCloud.LACK_PASSWORD, pwd=pwd, url=share_url
                 )  # 没给提取码直接退出
             # data : 'action=downprocess&sign=AGZRbwEwU2IEDQU6BDRUaFc8DzxfMlRjCjTPlVkWzFSYFY7ATpWYw_c_c&p='+pwd,
-            logger.error("!!!!!!!!!!!!!!!!!!!!")
             sign = parse_sign(first_page)
             post_data = {"action": "downprocess", "sign": sign, "p": pwd}
-            logger.error(f"get_file_info_by_url post_data={post_data}")
+            logger.debug("get_file_info_by_url post_data=%s", {**post_data, "p": "***"})
             link_info = self._post(
                 self._host_url + "/ajaxm.php", post_data
             )  # 保存了重定向前的链接信息和文件名
@@ -976,7 +976,7 @@ class LanZouCloud(object):
             result.append(FolderId(folder_name, folder_id, "", ""))
         return result
 
-    def get_move_paths(self) -> List[FolderList]:
+    def get_move_paths(self) -> list[FolderList]:
         """获取所有文件夹的绝对路径(耗时长)"""
         result = []
         root = FolderList()
@@ -1022,9 +1022,7 @@ class LanZouCloud(object):
             parent_folder_id, folder.name, info.desc
         )  # 在目标文件夹下创建同名文件夹
 
-        if new_folder_id == LanZouCloud.MKDIR_ERROR:
-            return LanZouCloud.FAILED
-        elif new_folder_id == folder_id:  # 移动文件夹到同一目录
+        if new_folder_id == LanZouCloud.MKDIR_ERROR or new_folder_id == folder_id:
             return LanZouCloud.FAILED
 
         self.set_passwd(new_folder_id, info.pwd, False)  # 保持密码相同
@@ -1041,7 +1039,7 @@ class LanZouCloud(object):
 
     def _upload_small_file(
         self, task, file_path, folder_id=-1, callback=None
-    ) -> Tuple[int, int, bool]:
+    ) -> tuple[int, int, bool]:
         """绕过格式限制上传不超过 max_size 的文件"""
         if not os.path.isfile(file_path):
             return LanZouCloud.PATH_ERROR, 0, True
@@ -1186,7 +1184,7 @@ class LanZouCloud(object):
 
     def upload_file(
         self, task: object, file_path, folder_id=-1, callback=None, allow_big_file=False
-    ) -> Tuple[int, int, bool]:
+    ) -> tuple[int, int, bool]:
         """解除限制上传文件"""
         if not os.path.isfile(file_path):
             return LanZouCloud.PATH_ERROR, 0, True
@@ -1266,13 +1264,13 @@ class LanZouCloud(object):
             return info.code
 
         resp = self._head(info.durl)
-        print("down_file_by_url ", info.durl)
+        logger.debug(f"down_file_by_url durl={info.durl}")
         if not resp:
             task.info = LanZouCloud.NETWORK_ERROR
             return LanZouCloud.NETWORK_ERROR
 
         content_length = resp.headers.get("Content-Length", None)
-        print("down_file_by_url Content-Length:", content_length)
+        logger.debug(f"down_file_by_url Content-Length: {content_length}")
 
         # 对于 txt 文件, 可能出现没有 Content-Length 的情况
         # 此时文件需要下载一次才会出现 Content-Length
@@ -1295,7 +1293,7 @@ class LanZouCloud(object):
                     return LanZouCloud.FAILED
                 content_length = resp_.headers.get("Content-Length", None)
                 logger.debug(f"Content-Length: {content_length}")
-            print("down_file_by_url again Content-Length:", content_length)
+            logger.debug(f"down_file_by_url again Content-Length: {content_length}")
 
         total_size = int(content_length)
 
@@ -1311,11 +1309,13 @@ class LanZouCloud(object):
         now_size = 0
         if os.path.exists(file_path):
             now_size = os.path.getsize(file_path)  # 本地已经下载的文件大小
-            print("down_file_by_url exist ", task.now_size, now_size)
+            logger.debug(
+                f"down_file_by_url exist task.now_size={task.now_size} now_size={now_size}"
+            )
             task.now_size += now_size
             callback()
             if now_size >= total_size:
-                print("down_file_by_url exist full file ")
+                logger.debug("down_file_by_url exist full file")
                 logger.debug(f"File file_path={file_path} local already exist!")
                 return LanZouCloud.SUCCESS
 
@@ -1363,7 +1363,7 @@ class LanZouCloud(object):
             # 若该页面进行了js加密，则进行解密，计算acw_sc__v2，并加入cookie
             acw_sc__v2 = calc_acw_sc__v2(html)
             self._session.cookies.set("acw_sc__v2", acw_sc__v2)
-            logger.debug(f"Set Cookie: acw_sc__v2={acw_sc__v2}")
+            logger.debug("Set Cookie: acw_sc__v2=***")
             html = self._get(share_url).text  # 文件分享页面(第一页)
 
         try:

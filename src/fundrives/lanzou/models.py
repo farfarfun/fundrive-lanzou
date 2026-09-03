@@ -93,10 +93,6 @@ class ItemList:
 class FileList(ItemList):
     """文件列表类"""
 
-    pass
-
 
 class FolderList(ItemList):
     """文件夹列表类"""
-
-    pass

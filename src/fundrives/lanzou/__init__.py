@@ -3,8 +3,13 @@ from lanzou.api.core import LanZouCloud
 version = "2.6.8"
 
 
-def why_error(code):
-    """错误原因"""
+def why_error(code: int) -> str:
+    """将 `LanZouCloud` 返回的状态码转换为中文错误原因说明。
+
+    :param code: `LanZouCloud` 各方法返回的状态码，例如
+        `LanZouCloud.URL_INVALID`、`LanZouCloud.NETWORK_ERROR` 等。
+    :return: 对应状态码的中文描述；未知状态码返回 `"未知错误 {code}"`。
+    """
     if code == LanZouCloud.URL_INVALID:
         return "分享链接无效"
     elif code == LanZouCloud.LACK_PASSWORD:
@@ -23,4 +28,4 @@ def why_error(code):
         return f"未知错误 {code}"
 
 
-__all__ = ["utils", "types", "models", "LanZouCloud", "version", "why_error"]
+__all__ = ["LanZouCloud", "models", "types", "utils", "version", "why_error"]
