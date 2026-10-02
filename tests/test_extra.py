@@ -2,12 +2,20 @@
 
 覆盖点：
 - 未配置第三方短链 token 时自动跳过对应服务，不应再硬编码尝试。
-- 全部服务失败时返回空字符串，而不是抛异常。
+- 全部服务都因网络失败时返回空字符串，而不是抛异常。
+
+注意：这里用 `requests.ConnectionError` 而不是裸 `Exception` 当失败桩。
+原先的用例用的是 `side_effect=Exception(...)`，那等于把「`except Exception`
+吞掉一切异常」当成契约固化下来；按 SPEC §8.2，实现只应兜住网络/解析类失败，
+编程错误必须冒出来（对应用例见 tests/test_logging_and_metadata.py 的
+`test_get_short_url_propagates_unexpected_exception`）。
 """
 
 from __future__ import annotations
 
 from unittest import mock
+
+import requests
 
 from fundrives.lanzou import extra
 
@@ -34,11 +42,12 @@ def test_get_short_url_returns_empty_string_when_all_providers_fail():
         mock.patch.object(extra, "DWZ_LC_TOKEN", None),
         mock.patch.object(extra, "ECX_CX_TOKEN", None),
         mock.patch(
-            "fundrives.lanzou.extra.requests.get", side_effect=Exception("network down")
+            "fundrives.lanzou.extra.requests.get",
+            side_effect=requests.ConnectionError("network down"),
         ),
         mock.patch(
             "fundrives.lanzou.extra.requests.post",
-            side_effect=Exception("network down"),
+            side_effect=requests.ConnectionError("network down"),
         ),
     ):
         result = extra.get_short_url("https://example.com/x")

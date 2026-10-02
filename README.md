@@ -35,12 +35,28 @@ for file in drive.get_file_list(-1):
 - 上传、下载（含分享链接直链解析、提取码支持）
 - 分享链接创建/查询、回收站管理
 
-## 来源说明
+## 短链服务配置（可选）
+
+`fundrives.lanzou.extra.get_short_url` 会依次尝试几个第三方短链服务。需要鉴权的两个
+服务从环境变量读取令牌，未配置时自动跳过，改走无需鉴权的兜底服务：
+
+```bash
+export FUNDRIVE_LANZOU_DWZ_LC_TOKEN=...   # dwz.lc
+export FUNDRIVE_LANZOU_ECX_CX_TOKEN=...   # ecx.cx
+```
+
+## 来源说明与第三方协议
 
 对外暴露的核心驱动类 `LanZouCloud` 来自第三方包
 [`lanzou-api`](https://pypi.org/project/lanzou-api/)（导入名同为 `lanzou`），
 本仓库在此基础上提供 `fundrives.lanzou` 命名空间封装，便于与
 `fundrive-alipan`/`fundrive-baidu`/`fundrive-quark` 等其他网盘驱动统一管理。
+
+本仓库 `src/fundrives/lanzou/` 下的 `core.py`、`parser.py`、`models.py`、`types.py`、
+`utils.py`、`extra.py` 同样派生自上游项目
+[LanZouCloud-API](https://github.com/zaxtyson/LanZouCloud-API)，其原始协议为
+**MIT，Copyright (c) 2019 zaxtyson**，与本仓库的 MIT 协议兼容。完整的来源清单与原始
+许可证全文见 [THIRD_PARTY_NOTICE.md](THIRD_PARTY_NOTICE.md)。
 
 ---
 

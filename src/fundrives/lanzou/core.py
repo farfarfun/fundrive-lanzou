@@ -1,11 +1,15 @@
 """
 蓝奏网盘 API，封装了对蓝奏云的各种操作，解除了上传格式、大小限制
+
+本模块源自第三方项目 LanZouCloud-API（MIT，Copyright (c) 2019 zaxtyson），
+原始协议与版权声明见仓库根目录 `THIRD_PARTY_NOTICE.md`。
 """
 
 import os
 import pickle
 import re
 import shutil
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -18,6 +22,7 @@ from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
 from urllib3 import disable_warnings
 from urllib3.exceptions import InsecureRequestWarning
 
+from .errors import NoAvailableDomainError
 from .models import FileList
 from .parser import *
 from .types import *
@@ -25,7 +30,7 @@ from .utils import *
 
 logger = getLogger("fundrive")
 
-__all__ = ["LanZouCloud"]
+__all__ = ["LanZouCloud", "check_domains", "refresh_available_domains"]
 
 check_url = "https://www.lanzoub.com"
 available_domains = [
@@ -47,32 +52,69 @@ available_domains = [
 
 executors = ThreadPoolExecutor()  # 线程数 min(32, os.cpu_count() + 4)
 
+_domains_lock = threading.Lock()
 
-def check_domains():
-    before = len(available_domains)
-    for domain in available_domains:
+# 分享文件夹列表接口返回「请刷新，重试」时，同一页最多连续重试多少次。
+# 没有上限会让 get_folder_info_by_url 在服务端一直返回 zt==4 时无限循环。
+_MAX_REFRESH_RETRY = 10
+
+
+def check_domains(timeout: float = 5.0) -> list[str]:
+    """探测 `available_domains` 里哪些蓝奏云域名当前可用。
+
+    :param timeout: 单个域名探测请求的超时秒数。
+    :return: 探测结果为可用的域名列表（不修改模块级 `available_domains`）。
+    :raises NoAvailableDomainError: 所有候选域名都探测失败。
+    """
+    candidates = list(available_domains)
+    alive = []
+    for domain in candidates:
         req_url = check_url.replace("lanzoub.com", domain)
         try:
-            rsp = requests.head(req_url, timeout=0.1)
-            if rsp.status_code != 200:
-                available_domains.remove(domain)
+            rsp = requests.head(req_url, timeout=timeout)
+        except requests.RequestException as e:
+            logger.debug(f"域名探测失败: domain={domain} reason={type(e).__name__}")
+            continue
+        if rsp.status_code == 200:
+            alive.append(domain)
+        else:
+            logger.debug(f"域名探测失败: domain={domain} status={rsp.status_code}")
 
-        except Exception:
-            available_domains.remove(domain)
-
-    logger.error(
-        f"before: {before} after: %s %s" % (len(available_domains), available_domains)
-    )
-    if len(available_domains) == 0:
-        logger.error("No available domains!!")
-        raise Exception("No available domains!!")
+    logger.info(f"域名探测完成: 候选 {len(candidates)} 个，可用 {len(alive)} 个")
+    if not alive:
+        raise NoAvailableDomainError(
+            f"所有候选蓝奏云域名均不可用（共探测 {len(candidates)} 个）"
+        )
+    return alive
 
 
-#  启动时检测可用域名, 放到线程池执行,加快启动
-executors.submit(check_domains)
+def refresh_available_domains(timeout: float = 5.0) -> list[str]:
+    """探测并就地刷新模块级 `available_domains`。
+
+    注意：这是**显式调用**的网络操作。本模块导入时不会自动发起任何网络请求。
+
+    :param timeout: 单个域名探测请求的超时秒数。
+    :return: 刷新后的可用域名列表。
+    :raises NoAvailableDomainError: 所有候选域名都探测失败，此时保留原列表不变。
+    """
+    alive = check_domains(timeout=timeout)
+    with _domains_lock:
+        available_domains[:] = alive
+    return alive
 
 
 class LanZouCloud:
+    """蓝奏云网盘操作客户端。
+
+    封装登录、文件/文件夹列表、上传、下载、分享、回收站等操作。操作方法返回类内
+    定义的整型状态码（`SUCCESS` / `NETWORK_ERROR` / ...）或 `types.py` 里定义的
+    namedtuple 结果对象，网络失败不抛异常而是返回 `NETWORK_ERROR`；状态码可用
+    `fundrives.lanzou.why_error` 转成中文说明。
+
+    本类源自第三方项目 LanZouCloud-API（MIT，Copyright (c) 2019 zaxtyson），
+    为便于与上游同步，方法签名与实现保持贴近上游。
+    """
+
     FAILED = -1
     SUCCESS = 0
     ID_ERROR = 1
@@ -143,9 +185,8 @@ class LanZouCloud:
                 logger.warning("Encountered timeout error while requesting network!")
                 raise TimeoutError
             except (ConnectionError, requests.RequestException):
-                logger.debug(
-                    f"Post to {possible_url} ({data}) failed, try another domain"
-                )
+                # 不记录 data：登录等请求的 body 里带账号密码
+                logger.debug(f"Post to {possible_url} failed, try another domain")
 
         return None
 
@@ -173,10 +214,13 @@ class LanZouCloud:
             return LanZouCloud.SUCCESS
         return LanZouCloud.FAILED
 
-    def login(self, username, passwd) -> int:
-        """
-        登录蓝奏云控制台[已弃用]
-        对某些用户可能有用
+    def login(self, username: str, passwd: str) -> int:
+        """用账号密码登录蓝奏云控制台（官方已改版，对部分老用户仍可用）。
+
+        :param username: 蓝奏云账号（手机号或用户名）。
+        :param passwd: 账号对应的登录密码。
+        :return: `SUCCESS` 登录成功；`NETWORK_ERROR` 网络不可达；
+            `FAILED` 账号密码错误或页面结构变化导致登录失败。
         """
         self._session.cookies.clear()
         login_data = {
@@ -239,8 +283,13 @@ class LanZouCloud:
             LanZouCloud.SUCCESS if "退出系统成功" in html.text else LanZouCloud.FAILED
         )
 
-    def delete(self, fid, is_file=True) -> int:
-        """把网盘的文件、无子文件夹的文件夹放到回收站"""
+    def delete(self, fid: int | str, is_file: bool = True) -> int:
+        """把网盘的文件、无子文件夹的文件夹放到回收站。
+
+        :param fid: 文件 id（`is_file=True`）或文件夹 id（`is_file=False`）。
+        :param is_file: `True` 删除文件，`False` 删除文件夹（文件夹必须没有子文件夹）。
+        :return: `SUCCESS` / `NETWORK_ERROR` / `FAILED`。
+        """
         post_data = (
             {"task": 6, "file_id": fid} if is_file else {"task": 3, "folder_id": fid}
         )
@@ -280,14 +329,15 @@ class LanZouCloud:
         all_dir_list = FolderList()  # 文件夹信息列表
         dir_name_list = []  # 文件夹名列表d
         counter = 1  # 重复计数器
-        for fid, name, size, time in dirs:
+        # 循环变量不要叫 time：会遮蔽模块级 `import time`
+        for fid, name, size, time_str in dirs:
             if name in dir_name_list:  # 文件夹名前 17 个中文或 34 个英文重复
                 counter += 1
                 name = f"{name}({counter})"
             else:
                 counter = 1
             dir_name_list.append(name)
-            all_dir_list.append(RecFolder(name, int(fid), size, time, None))
+            all_dir_list.append(RecFolder(name, int(fid), size, time_str, None))
         return all_dir_list
 
     def get_rec_file_list(self, folder_id=-1) -> FileList:
@@ -490,16 +540,29 @@ class LanZouCloud:
             else LanZouCloud.FAILED
         )
 
-    def get_file_list(self, folder_id=-1) -> FileList:
-        """获取文件列表"""
+    def get_file_list(self, folder_id: int | str = -1) -> FileList:
+        """获取指定文件夹下的文件列表。
+
+        :param folder_id: 文件夹 id，`-1` 表示网盘根目录。
+        :return: `FileList` 容器；网络异常或未登录时返回已取到的部分（可能为空）。
+        """
         page = 1
+        retry = 0
         file_list = FileList()
         while True:
             post_data = {"task": 5, "folder_id": folder_id, "pg": page}
             resp = self._post(self.doupload_url, post_data)
             if not resp:  # 网络异常，重试
+                # 必须有重试上限：无上限时所有候选域名都不可用会变成占满 CPU 的死循环
+                retry += 1
+                if retry > _MAX_REFRESH_RETRY:
+                    logger.error(
+                        f"获取文件列表连续 {retry} 次网络异常，放弃: page={page}"
+                    )
+                    break
                 continue
             else:
+                retry = 0
                 resp = resp.json()
             if resp["info"] == 0:
                 break  # 已经拿到了全部的文件信息
@@ -633,7 +696,7 @@ class LanZouCloud:
                 return FileDetail(LanZouCloud.NETWORK_ERROR, pwd=pwd, url=share_url)
 
         first_page = remove_notes(first_page.text)  # 去除网页里的注释
-        logger.error(f"get_file_info_by_url first_page={first_page}")
+        logger.debug(f"分享页面已获取: length={len(first_page)}")
         if "文件取消" in first_page or "文件不存在" in first_page:
             return FileDetail(LanZouCloud.FILE_CANCELLED, pwd=pwd, url=share_url)
 
@@ -650,11 +713,10 @@ class LanZouCloud:
             # data : 'action=downprocess&sign=AGZRbwEwU2IEDQU6BDRUaFc8DzxfMlRjCjTPlVkWzFSYFY7ATpWYw_c_c&p='+pwd,
             sign = parse_sign(first_page)
             post_data = {"action": "downprocess", "sign": sign, "p": pwd}
-            logger.debug("get_file_info_by_url post_data=%s", {**post_data, "p": "***"})
+            logger.debug("提取码下载请求已构造: action=downprocess sign=*** p=***")
             link_info = self._post(
                 self._host_url + "/ajaxm.php", post_data
             )  # 保存了重定向前的链接信息和文件名
-            logger.error(f"get_file_info_by_url link_info={link_info}")
             second_page = self._get(
                 share_url
             )  # 再次请求文件分享页面，可以看见文件名，时间，大小等信息(第二页)
@@ -671,7 +733,7 @@ class LanZouCloud:
             para = re.search(r'<iframe class=.*?src="(.+?)"', first_page).group(
                 1
             )  # 提取下载页面 URL 的参数
-            logger.error(f"get_file_info_by_url else para={para}")
+            logger.debug("已从分享页面提取下载页 iframe 参数")
             # 文件名位置变化很多
             f_name = parse_file_name(first_page)
             f_time = parse_time(first_page)
@@ -679,7 +741,6 @@ class LanZouCloud:
             f_desc = parse_desc(first_page)
 
             first_page = self._get(self._host_url + para)
-            logger.error(f"get_file_info_by_url else frame_page={first_page.text}")
             if not first_page:
                 return FileDetail(
                     LanZouCloud.NETWORK_ERROR,
@@ -693,7 +754,7 @@ class LanZouCloud:
             first_page = remove_notes(first_page.text)
             sign = parse_sign(first_page)
 
-            logger.error(f"无密码 sign:{sign} shareUrl: {share_url}")
+            logger.debug("无提取码分享页已解析出 sign（内容不记录）")
             post_data = {"action": "downprocess", "sign": sign, "ves": 1}
             # 某些特殊情况 share_url 会出现 webpage 参数, post_data 需要更多参数
             # https://github.com/zaxtyson/LanZouCloud-API/issues/74
@@ -732,7 +793,7 @@ class LanZouCloud:
                     url=share_url,
                 )
             link_info = link_info.json()
-            logger.info(f"get_file_info_by_url=== link_info{link_info}")
+            logger.debug(f"直链信息已获取: zt={link_info.get('zt')}")
         # 这里开始获取文件直链
         if link_info["zt"] != 1:  # 返回信息异常，无法获取直链
             return FileDetail(
@@ -764,7 +825,7 @@ class LanZouCloud:
         if "网络异常" not in download_page_html:  # 没有遇到验证码
             direct_url = download_page.headers["Location"]  # 重定向后的真直链
         else:  # 遇到验证码，验证后才能获取下载直链
-            logger.info(f"get_file_info_by_url=== 验证码 {download_page_html}")
+            logger.info("下载页返回验证码页面，开始走验证流程")
             file_token = re.findall("'file':'(.+?)'", download_page_html)[0]
             file_sign = re.findall("'sign':'(.+?)'", download_page_html)[0]
             check_api = "https://vip.d0.baidupan.com/file/ajax.php"
@@ -1183,9 +1244,24 @@ class LanZouCloud:
         return LanZouCloud.SUCCESS, int(dir_id), False  # 大文件返回文件夹id
 
     def upload_file(
-        self, task: object, file_path, folder_id=-1, callback=None, allow_big_file=False
+        self,
+        task: object,
+        file_path: str,
+        folder_id: int | str = -1,
+        callback=None,
+        allow_big_file: bool = False,
     ) -> tuple[int, int, bool]:
-        """解除限制上传文件"""
+        """上传单个文件，必要时自动拆块以绕过官方大小/格式限制。
+
+        :param task: 上传任务对象，需带 `info` 属性用于回写进度/状态说明。
+        :param file_path: 待上传的本地文件绝对或相对路径。
+        :param folder_id: 目标文件夹 id，`-1` 表示网盘根目录。
+        :param callback: 形如 `callback(file_name, total_size, now_size)` 的进度回调，
+            可为 `None`。
+        :param allow_big_file: 是否允许上传超过 `set_max_size()` 限制的大文件
+            （通过拆块 + 伪装后缀实现）。
+        :return: `(状态码, 已上传字节数, 是否可继续上传下一个文件)` 三元组。
+        """
         if not os.path.isfile(file_path):
             return LanZouCloud.PATH_ERROR, 0, True
 
@@ -1260,11 +1336,11 @@ class LanZouCloud:
         info = self.get_durl_by_url(share_url, task.pwd)
         if info.code != LanZouCloud.SUCCESS:
             task.info = info.code
-            logger.error(f"File direct url info: {info}")
+            logger.error(f"获取文件直链失败: code={info.code} name={info.name}")
             return info.code
 
         resp = self._head(info.durl)
-        logger.debug(f"down_file_by_url durl={info.durl}")
+        logger.debug("已请求文件直链（直链本身不记录）")
         if not resp:
             task.info = LanZouCloud.NETWORK_ERROR
             return LanZouCloud.NETWORK_ERROR
@@ -1303,7 +1379,7 @@ class LanZouCloud:
         rename = re.sub(
             r"(\.\w+)\.enc", r"\1", info.name.replace("*", "_")
         )  # 替换文件名中的 *
-        logger.error(f"new fileName {rename}")
+        logger.debug(f"规范化后的文件名: {rename}")
         file_path = task.path + os.sep + rename
         logger.debug(f"Save file to file_path={file_path}")
         now_size = 0
@@ -1368,7 +1444,6 @@ class LanZouCloud:
 
         try:
             # 获取文件需要的参数
-            logger.info("====== 获取文件需要的参数")
             html = remove_notes(html)
             lx = re.findall(r"'lx':'?(\d)'?,", html)[0]
             t = re.findall(r"var \w{6} = '(\d{10})';", html)[0]
@@ -1378,18 +1453,14 @@ class LanZouCloud:
             folder_name = parse_folder_name(html)
             folder_time = parse_folder_time(html)
             folder_desc = parse_folder_desc(html)
-            logger.info(
-                "====== 获取文件需要的参数",
-                lx,
-                t,
-                k,
-                folder_id,
-                folder_name,
-                folder_time,
-                folder_desc,
+            # k / t / lx 是该分享页一次性的鉴权参数，只记录是否取到，不记录内容
+            logger.debug(
+                f"分享文件夹参数已解析: folder_id={folder_id} "
+                f"folder_name={folder_name} folder_time={folder_time} "
+                f"auth_params_present={bool(lx and t and k)}"
             )
-        except IndexError:
-            logger.error("IndexError")
+        except IndexError as e:
+            logger.error(f"分享文件夹页面结构不匹配，参数提取失败: {e}")
             return FolderDetail(LanZouCloud.FAILED)
 
         # 提取子文件夹信息(vip用户分享的文件夹可以递归包含子文件夹)
@@ -1406,6 +1477,7 @@ class LanZouCloud:
 
         # 提取改文件夹下全部文件
         page = 1
+        retry = 0
         files = FileList()
         while True:
             try:
@@ -1422,18 +1494,23 @@ class LanZouCloud:
                     data=post_data,
                     headers=self._headers,
                 )
-                logger.info(f"====== 获取文件需要的参数 post {post.text}")
-                if not post.text:
-                    logger.error("====!!!!!!!!!!!!")
-                    continue
+                # `_post` 在所有候选域名都失败时返回 None，必须先判空，
+                # 否则下面访问 .text 会抛 AttributeError
+                if post is None or not post.text:
+                    return FolderDetail(LanZouCloud.NETWORK_ERROR)
+                logger.debug(
+                    f"分享文件夹列表响应已获取: page={page} length={len(post.text)}"
+                )
                 resp = post.json()
-                logger.info(f"====== 获取文件需要的参数 resp {resp}")
             except requests.RequestException as e:
-                logger.error(e)
+                logger.error(f"请求分享文件夹列表失败: page={page} reason={e}")
                 return FolderDetail(LanZouCloud.NETWORK_ERROR)
+            except ValueError as e:  # 含 json.JSONDecodeError
+                logger.error(f"分享文件夹列表响应不是合法 JSON: page={page} reason={e}")
+                return FolderDetail(LanZouCloud.FAILED)
             if resp["zt"] == 1:  # 成功获取一页文件信息
                 file_count = len(resp["text"])
-                logger.info("文件数量", file_count)
+                logger.debug(f"本页文件数量: {file_count}")
                 for f in resp["text"]:
                     name = f["name_all"].replace("&amp;", "&")
                     if "*" in name:
@@ -1454,6 +1531,7 @@ class LanZouCloud:
                 if file_count < 50:
                     break
                 page += 1  # 下一页
+                retry = 0
                 # 服务器请求1s限制
                 time.sleep(1)
                 continue
@@ -1462,6 +1540,13 @@ class LanZouCloud:
             elif resp["zt"] == 3:  # 提取码错误
                 return FolderDetail(LanZouCloud.PASSWORD_ERROR)
             elif resp["zt"] == 4:  # '请刷新，重试
+                # 服务端要求刷新重试；必须有重试上限，否则同一页会无限循环
+                retry += 1
+                if retry > _MAX_REFRESH_RETRY:
+                    logger.error(
+                        f"分享文件夹列表连续 {retry} 次被要求刷新重试，放弃: page={page}"
+                    )
+                    return FolderDetail(LanZouCloud.FAILED)
                 # 避免频繁请求
                 time.sleep(0.1)
                 continue
@@ -1741,36 +1826,3 @@ class LanZouCloud:
             return LanZouCloud.NETWORK_ERROR
         username = re.search(r"com/u/(\w+?)\?t2", remove_notes(resp.text))
         return username.group(1) if username else None
-
-
-if __name__ == "__main__":
-    lanzou = LanZouCloud()
-    # # 文件夹解析
-    # fileDetail = lanzou.get_folder_info_by_url("https://leon.lanzoub.com/b0d8h93hi")
-    # print(fileDetail)
-    # # fileDetail = lanzou.get_folder_info_by_url("https://leon.lanzoub.com/b0d8rnc4d", "80nl")
-    # fileDetail = lanzou.get_folder_info_by_url("https://leon.lanzoub.com/b00erfryd", "6mbu")
-    # print(fileDetail)
-    # fileDetail = lanzou.get_folder_info_by_url("https://leon.lanzoub.com/b0dazruwd",
-    #                                            "1111")
-    # print(fileDetail)
-    fileDetail = lanzou.get_folder_info_by_url("https://leon.lanzoub.com/b0d8h93hi", "")
-    # print(fileDetail)
-
-    # 文件解析
-    # 无密码文件
-    # fileDetail = lanzou.get_file_info_by_url("https://leon.lanzoub.com/iJV1f01ns1sh")
-    # print(fileDetail)
-    # fileDetail = lanzou.get_share_info_by_url("https://leon.lanzoub.com/iJV1f01ns1sh")
-    # print(fileDetail)
-    # # 有密码文件
-    # fileDetail = lanzou.get_file_info_by_url("https://leon.lanzoub.com/ij31g0jiqieb", "6666")
-    # print(fileDetail)
-    # fileDetail = lanzou.get_share_info_by_url("https://leon.lanzoub.com/ij31g0jiqieb", "6666")
-    # print(fileDetail)
-    # fileDetail = lanzou.get_file_info_by_url(
-    #     "https://leon.lanzoub.com/iqOuv14z74pc")
-    fileDetail = lanzou.get_file_info_by_url(
-        "https://leon.lanzoub.com/ij31g0jiqieb", "6666"
-    )
-    print(fileDetail)

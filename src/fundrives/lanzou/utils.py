@@ -1,5 +1,8 @@
 """
 API 处理网页数据、数据切片时使用的工具
+
+本模块源自第三方项目 LanZouCloud-API（MIT，Copyright (c) 2019 zaxtyson），
+原始协议与版权声明见仓库根目录 `THIRD_PARTY_NOTICE.md`。
 """
 
 import os
@@ -34,6 +37,19 @@ __all__ = [
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:78.0) Gecko/20100101 Firefox/78.0"
+)
+
+# pickle 反序列化不可信字节串时可能抛出的异常集合（SPEC §8.2：不用裸 `except Exception`）
+_UNPICKLE_ERRORS = (
+    pickle.UnpicklingError,
+    AttributeError,
+    EOFError,
+    ImportError,
+    IndexError,
+    KeyError,
+    TypeError,
+    ValueError,
+    MemoryError,
 )
 
 headers = {
@@ -156,19 +172,6 @@ def time_stamp(time_str: str) -> datetime | timedelta | str | Any:
     return date.timestamp()
 
 
-if __name__ == "__main__":
-    print(datetime.today())
-    print(time_stamp("5 秒前"))
-    print(time_stamp("5 分钟前"))
-    print(time_stamp("5 小时前"))
-    print(time_stamp("昨天12:"))
-    print(time_stamp("昨天12:15"))
-    print(time_stamp("前天"))
-    print(time_stamp("前天 10"))
-    print(time_stamp("前天 10 : 25"))
-    print(time_stamp("5 天前"))
-
-
 def is_name_valid(filename: str) -> bool:
     """检查文件名是否允许上传"""
 
@@ -257,15 +260,13 @@ def is_file_url(share_url: str) -> bool:
     else:  # VIP 用户的 URL 很随意
         try:
             html = requests.get(share_url, headers=headers, verify=False).text
-            html = remove_notes(html)
-            return (
-                True
-                if re.search(r'class="fileinfo"|id="file"|文件描述', html)
-                else False
-            )
-        except (requests.RequestException, Exception) as e:
-            logger.error(f"Unexpected error: e={e}")
+        except requests.RequestException as e:
+            logger.error(f"请求分享链接失败: reason={type(e).__name__}: {e}")
             return False
+        html = remove_notes(html)
+        return (
+            True if re.search(r'class="fileinfo"|id="file"|文件描述', html) else False
+        )
 
 
 def is_folder_url(share_url: str) -> bool:
@@ -279,15 +280,19 @@ def is_folder_url(share_url: str) -> bool:
     else:  # VIP 用户的 URL 很随意
         try:
             html = requests.get(share_url, headers=headers).text
-            html = remove_notes(html)
-            return True if re.search(r'id="infos"', html) else False
-        except (requests.RequestException, Exception) as e:
-            logger.error(f"Unexpected error: e={e}")
+        except requests.RequestException as e:
+            logger.error(f"请求分享链接失败: reason={type(e).__name__}: {e}")
             return False
+        html = remove_notes(html)
+        return True if re.search(r'id="infos"', html) else False
 
 
-def un_serialize(data: bytes):
-    """反序列化文件信息数据"""
+def un_serialize(data: bytes) -> dict | None:
+    """反序列化上传时写入文件尾部的「报尾」文件信息数据。
+
+    :param data: 从文件尾部读出的字节串。
+    :return: 反序列化出的字典；数据格式不符或反序列化失败时返回 `None`。
+    """
     # https://github.com/zaxtyson/LanZouCloud-API/issues/65
     is_right_format = False
     if data.startswith(b"\x80\x04") and data.endswith(b"u."):
@@ -299,12 +304,13 @@ def un_serialize(data: bytes):
         return None
     try:
         ret = pickle.loads(data)
-        if not isinstance(ret, dict):
-            return None
-        return ret
-    except Exception as e:  # 这里可能会丢奇怪的异常
-        logger.debug(f"Pickle e={e}")
+    except _UNPICKLE_ERRORS as e:
+        # pickle 对不完整/被截断的数据会抛出形态很杂的异常，这里按「数据不可信」统一降级
+        logger.debug(f"报尾反序列化失败: {type(e).__name__}: {e}")
         return None
+    if not isinstance(ret, dict):
+        return None
+    return ret
 
 
 def big_file_split(

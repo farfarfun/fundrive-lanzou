@@ -1,40 +1,19 @@
 """fundrive-lanzou 轻量冒烟测试（smoke tests）。
 
-范围：只确认包能否正常安装 / 导入，以及真正会被使用到的核心驱动类
-`LanZouCloud` 在不发起真实网络请求的情况下基本可用。不追求覆盖率，
-不测试真实登录 / 上传 / 下载等需要真实蓝奏云账号的业务逻辑。
+范围：只确认包能否正常安装 / 导入，以及对外导出的核心驱动类 `LanZouCloud`
+在不发起真实网络请求的情况下基本可用。不测试真实登录 / 上传 / 下载等需要真实
+蓝奏云账号的业务逻辑。
 
 按 NAMING.md 的约定，本仓库的导入名是共享命名空间 `fundrives`
 （`fundrive-alipan` / `fundrive-baidu` / `fundrive-lanzou` / `fundrive-quark`
-都发布到同一个 `fundrives` 顶层包下）。经检查，本仓库源码没有 import
-`fundrive` 主包（既不是 `fundrive` 定义的驱动接口的实现类，也没有任何
-`import fundrive` / `from fundrive import ...`），所以这里不测试
-`fundrive` 的导入，也没有为它新增依赖。
+都发布到同一个 `fundrives` 顶层包下）。本仓库源码没有 import `fundrive` 主包，
+所以这里不测试 `fundrive` 的导入，也没有为它新增依赖。
 
-关于依赖修复（详见仓库根目录 pyproject.toml 的改动）：
-`src/fundrives/lanzou/__init__.py` 第一行是
-    from lanzou.api.core import LanZouCloud
-这里的 `lanzou` 指向 PyPI 上的第三方包 `lanzou-api`
-(https://pypi.org/project/lanzou-api/，导入名恰好也叫 `lanzou`)，
-版本号与 __init__.py 里硬编码的 `version = "2.6.8"` 完全一致。但
-`lanzou-api` 之前没有出现在 pyproject.toml 的 `dependencies` 里，
-全新环境下 `import fundrives.lanzou` 会直接
-`ModuleNotFoundError: No module named 'lanzou'`。本次冒烟测试新增时，
-已把 `lanzou-api>=2.6.8`（以及它间接需要、但本仓库源码里其它模块也
-直接 import 的 `requests` / `requests-toolbelt`）补进 dependencies，
-不涉及任何 src 下业务代码的改动。
-
-另外发现但本次不修复的问题（仅记录，见下面 `test_...dead_vendored...`
-用例前的注释）：`src/fundrives/lanzou/{core,models,types,utils,parser,extra}.py`
-是一份看起来同源、但已经和上面提到的 `lanzou-api` 平行存在的"影子代码"，
-并没有被 `src/fundrives/lanzou/__init__.py` 引用到（`__init__.py`
-用的是外部包 `lanzou.api.core.LanZouCloud`，不是本地 `.core`），
-是死代码；其中 `core.py` 顶层还有一行
-`executors.submit(check_domains)`，import 这个模块本身就会另起一个
-线程去对蓝奏云各个域名发起真实 HTTP HEAD 请求 —— 属于"导入即产生真实
-网络副作用"，所以这里不 import/测试这份死代码里的 `core.py`
-（避免测试环境真的发起网络请求），只对其中确认没有导入期副作用的
-纯逻辑模块做一个轻量 import 冒烟。
+`fundrives.lanzou.__init__` 导出的 `LanZouCloud` 来自运行时依赖 `lanzou-api`
+（导入名 `lanzou`）；仓库内 `core.py` 等模块是从同一上游 LanZouCloud-API 派生、
+随本包一起分发的实现，来源与原始协议见 `THIRD_PARTY_NOTICE.md`。这两份实现并存
+属于待收敛的历史状态（见 farfarfun/todo-list#671），但两者都会被安装到用户环境里，
+因此 `tests/test_core_regressions.py` 对 `core.py` 的真实缺陷单独做了回归覆盖。
 """
 
 from __future__ import annotations
@@ -142,15 +121,13 @@ def test_why_error_helper():
     assert "未知错误" in why_error(9999)
 
 
-def test_import_dead_vendored_pure_logic_modules():
-    """src/fundrives/lanzou/{models,types,utils,parser,extra}.py 是没有被
-    `fundrives.lanzou.__init__` 引用到的"影子代码"（见模块 docstring），
-    但它们本身在 import 期间没有网络副作用，这里做一个最轻量的 import
-    冒烟，确认这些文件至少语法/依赖上是可用的。
+def test_import_all_shipped_submodules():
+    """本包随 wheel 分发的每个子模块都要能被导入，且导入期不得有网络副作用。
 
-    注意：故意不 import 同目录下的 `core.py` —— 它的模块顶层有
-    `executors.submit(check_domains)`，import 它会另起线程对蓝奏云
-    发起真实 HTTP 请求，不适合在冒烟测试里触发（见模块 docstring）。
+    `core.py` 以前在模块顶层执行 `executors.submit(check_domains)`，import 即对
+    14 个蓝奏云域名发起真实 HTTP HEAD 请求；现在已改成需显式调用的
+    `refresh_available_domains()`，所以这里可以安全地把它一起纳入冒烟
+    （禁网环境下的导入断言见 tests/test_core_regressions.py）。
     """
     for mod_name in (
         "fundrives.lanzou.models",
@@ -158,6 +135,8 @@ def test_import_dead_vendored_pure_logic_modules():
         "fundrives.lanzou.utils",
         "fundrives.lanzou.parser",
         "fundrives.lanzou.extra",
+        "fundrives.lanzou.errors",
+        "fundrives.lanzou.core",
     ):
         mod = importlib.import_module(mod_name)
         assert mod is not None

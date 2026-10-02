@@ -1,10 +1,10 @@
+"""html 页面参数解析。
+
+本模块源自第三方项目 LanZouCloud-API（MIT，Copyright (c) 2019 zaxtyson），
+原始协议与版权声明见仓库根目录 `THIRD_PARTY_NOTICE.md`。
+"""
+
 import re
-
-from farlog import getLogger
-
-logger = getLogger("fundrive")
-
-"""html页面参数解析"""
 
 
 def parse_file_name(html: str) -> str:
@@ -45,9 +45,16 @@ def parse_desc(html: str) -> str:
 
 
 def parse_sign(html: str) -> str:
+    """从分享页面 HTML 中提取下载请求所需的 `sign` 鉴权串。
+
+    `sign` 是一次性下载授权凭据，**不会**被写入日志。
+
+    :param html: 已去掉注释的分享页面 HTML。
+    :return: 提取到的 `sign` 字符串。
+    :raises IndexError: 页面结构变化，未能匹配到 `sign`。
+    """
     # sign 放在变量后面前后各有一个干扰项
     sign = re.findall(r"'sign':(.+?),", html)
-    logger.error("~~~~~~~~~~ first  " + "  ".join(sign))
     if len(sign) > 1:
         sign = sign[1]
     else:
@@ -58,7 +65,6 @@ def parse_sign(html: str) -> str:
             or re.findall(r"var skdklds\s*=\s*'(.{10,}?)';", html)
             or re.findall(rf"var {sign}\s*=\s*'(.+?)';", html)
         )[-1]
-    logger.error("~~~~~~~~~~ final  " + sign)
     return sign.replace("'", "")
 
 
