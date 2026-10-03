@@ -263,7 +263,7 @@ class LanZouCloud:
     def login_by_cookie(self, cookie: dict) -> int:
         """通过cookie登录"""
         logger.debug(
-            "login_by_cookie: ylogin=%s", "***" if cookie.get("ylogin") else ""
+            "login_by_cookie: ylogin={}", "***" if cookie.get("ylogin") else ""
         )
 
         self._session.cookies.update(cookie)

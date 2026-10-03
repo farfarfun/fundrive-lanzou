@@ -32,6 +32,8 @@
   PEP 420 命名空间包，标记放在命名空间层既不符合 PEP 561，还会与其他
   `fundrive-*` 包装出同一个文件路径
 - `uv.lock` 升级 urllib3 2.7.0 → 2.8.0（已知漏洞）
+- `login_by_cookie` 的调试日志误用 stdlib logging 的 `%s` 占位符，farlog（loguru）
+  不支持该语法，参数被静默丢弃；改为 `{}` 占位符
 
 ### 新增
 
