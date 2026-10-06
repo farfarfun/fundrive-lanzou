@@ -6,6 +6,8 @@
 
 ## 安装
 
+本项目要求 Python 3.10 或更高版本。
+
 ```bash
 pip install fundrive-lanzou
 # 或
@@ -26,6 +28,35 @@ if code != LanZouCloud.SUCCESS:
 # 列出根目录文件
 for file in drive.get_file_list(-1):
     print(file.name, file.size)
+```
+
+## 开发
+
+安装包含测试和代码检查工具的开发依赖：
+
+```bash
+uv sync --group dev
+```
+
+运行测试和代码检查：
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+```
+
+格式化代码时可运行：
+
+```bash
+uv run ruff format .
+```
+
+构建发行包并在本地安装验证：
+
+```bash
+uv build
+python -m pip install --force-reinstall dist/*.whl
 ```
 
 ## 主要能力
