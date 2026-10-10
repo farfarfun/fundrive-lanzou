@@ -110,6 +110,23 @@ def test_get_share_info_returns_network_error_when_post_fails():
     assert info.code == core.LanZouCloud.NETWORK_ERROR
 
 
+def test_get_share_info_by_url_returns_network_error_when_second_page_fails():
+    """密码分享页的第二次请求失败时应返回网络错误，不能解引用 None。"""
+    drive = core.LanZouCloud()
+    first_page = mock.Mock()
+    first_page.text = "<div id=\"pwdload\"></div>'sign':'abcdefghijklmnopqrstuv',"
+    link_info = mock.Mock()
+
+    with (
+        mock.patch.object(core, "is_file_url", return_value=True),
+        mock.patch.object(drive, "_get", side_effect=[first_page, None]),
+        mock.patch.object(drive, "_post", return_value=link_info),
+    ):
+        info = drive.get_share_info_by_url("https://example.com/i123", "abcd")
+
+    assert info.code == core.LanZouCloud.NETWORK_ERROR
+
+
 # ------------------------------------------------------------------- set_passwd
 
 

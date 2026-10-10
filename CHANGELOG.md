@@ -16,11 +16,11 @@
   现在统一受 `_MAX_REFRESH_RETRY` 约束，超限后按网络错误返回（`get_file_list` 之前
   只声明了 `retry` 变量但从未真正自增/判断上限，复核时发现仍会死循环，本次补上
   `retry += 1` 与上限判断）
-- 修复两处 `None` 解引用：`get_folder_info_by_url` 在 `_post` 返回 `None` 时访问
-  `post.text`、`get_file_info_by_url` 的错误日志里访问 `first_page.text`，都会抛
-  `AttributeError` 而不是返回错误码（复核时发现判空条件写成了 `if not post.text`，
-  `post is None` 时同样会先抛 `AttributeError`，本次改为 `if post is None or not
-  post.text`）
+- 修复三处 `None` 解引用：`get_folder_info_by_url` 在 `_post` 返回 `None` 时访问
+  `post.text`、`get_file_info_by_url` 的错误日志里访问 `first_page.text`、
+  `get_share_info_by_url` 在第二次 `_get` 返回 `None` 时访问 `second_page.text`，都会抛
+  `AttributeError` 而不是返回错误码（本次在访问响应 `.text` 前分别判空，包含
+  `post is None`、`first_page is None` 与 `second_page is None`）
 - 修复短链 Token 跨服务泄露：`get_short_url` 原先 4 个服务共用同一个 `headers` dict，
   `Authorization: Token <dwz.lc token>` 会残留并被发给 tinyurl.com 和 gg.gg；
   现在带鉴权的请求各自构造独立请求头
