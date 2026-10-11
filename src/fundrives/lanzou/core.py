@@ -1782,7 +1782,7 @@ class LanZouCloud:
             second_page = self._get(
                 f_url
             )  # 再次请求文件分享页面，可以看见文件名，时间，大小等信息(第二页)
-            if not link_info or not second_page.text:
+            if not link_info or second_page is None or not second_page.text:
                 return ShareInfo(LanZouCloud.NETWORK_ERROR)
             second_page = second_page.text
             link_info = link_info.json()
