@@ -1,7 +1,7 @@
 # fundrive-lanzou
 
 蓝奏云网盘（LanZouCloud）Python API 封装，提供登录、文件/文件夹列表、
-上传下载、分享与提取等常用能力，供 [fundrive](https://github.com/farfarfun/fundrive)
+上传下载、分享与提取等常用能力，供 [fundrive](https://github.com/farfarfun-fundrive/fundrive)
 及其他项目以统一命名空间接入蓝奏云。
 
 ## 安装
